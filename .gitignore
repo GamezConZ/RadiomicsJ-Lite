@@ -1,0 +1,13 @@
+# Carpetas de Maven (Aquí está tu .jar, lo subiremos aparte)
+target/
+
+# Configuraciones locales de VS Code y Java
+.vscode/
+.settings/
+.classpath
+.project
+*.class
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
