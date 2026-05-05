@@ -20,7 +20,7 @@ import io.github.tatsunidas.radiomics.main.ImagePreprocessing;
 import io.github.tatsunidas.radiomics.features.*;
 
 /**
- * RadiomicsJ-Lite: A high-performance, macro-recordable Fiji plugin 
+ * RadiomicsJ-Lite: A high-performance, macro-recordable Fiji plugin
  * for Radiomic feature extraction using the RadiomicsJ engine.
  */
 public class RadiomicsJ_Lite implements PlugIn {
@@ -28,13 +28,16 @@ public class RadiomicsJ_Lite implements PlugIn {
     // --- UI Persistence Variables ---
     private int lastImgIndex = 0, lastMaskIndex = 1;
     private int lastDimIndex = 1; // 0=2D, 1=3D
-    private int lastTexDiscIndex = 0, lastIvhDiscIndex = 0; 
-    
+    private int lastTexDiscIndex = 0, lastIvhDiscIndex = 0;
+
     private int lastLabel = 1;
     private double lastOutlierSigma = 3.0;
     private double lastRangeMin = 0.0, lastRangeMax = 255.0;
     private double lastVx = 2.0, lastVy = 2.0, lastVz = 2.0;
-    private double lastTexDiscVal = 16.0, lastDelta = 1.0, lastAlpha = 1.0;
+    private double lastTexDiscVal = 16.0, lastDelta = 1.0;
+    
+    // (coarseness parameter = 0 is the IBSI-standard neighbour search for NGLDM).
+    private double lastAlpha = 0.0;
     private double lastIvhDiscVal = 16.0;
     private String lastBoxSizes = "2,3,4,6,8,12,16,32,64";
 
@@ -45,20 +48,42 @@ public class RadiomicsJ_Lite implements PlugIn {
     private boolean bGldzm = true, bNgtdm = true, bNgldm = true, bFrac = true;
     private boolean bExportCsv = true;
 
+    /**
+     * Maps the IVH dropdown index to the mode integer expected by the engine.
+     *
+     * IntensityVolumeHistogramFeatures(img, mask, label, mode) modes:
+     *   0 = No discretisation - use pixel intensities as-is
+     *   1 = Discretise by Bin Width  (reads RadiomicsJ.IVH_binWidth)
+     *   2 = Discretise by Bin Count  (reads RadiomicsJ.IVH_binCount)
+     *
+     * UI dropdown:
+     *   index 0 = "Bin Count"  -> mode 2
+     *   index 1 = "Bin Width"  -> mode 1
+     *   index 2 = "Use As-Is"  -> mode 0
+     */
+    private static int ivhDropdownToMode(int dropdownIndex) {
+        switch (dropdownIndex) {
+            case 0:  return 2;  // Bin Count
+            case 1:  return 1;  // Bin Width
+            case 2:  return 0;  // Use As-Is (no discretisation)
+            default: return 0;
+        }
+    }
+
     @Override
     public void run(String arg) {
-        
+
         while (true) {
             int[] wList = WindowManager.getIDList();
             if (wList == null || wList.length < 2) {
                 IJ.error("RadiomicsJ-Lite", "Please open at least two images (Original Image and Mask).");
-                return; 
+                return;
             }
-            
+
             String[] titles = new String[wList.length];
             for (int i = 0; i < wList.length; i++) titles[i] = WindowManager.getImage(wList[i]).getTitle();
-            
-            if (lastImgIndex >= titles.length) lastImgIndex = 0;
+
+            if (lastImgIndex  >= titles.length) lastImgIndex  = 0;
             if (lastMaskIndex >= titles.length) lastMaskIndex = titles.length > 1 ? 1 : 0;
 
             GenericDialog gd = new GenericDialog("RadiomicsJ-Lite Configuration");
@@ -67,28 +92,28 @@ public class RadiomicsJ_Lite implements PlugIn {
             gd.addMessage("=== DATA INPUT ===");
             gd.addChoice("Original_Image:", titles, titles[lastImgIndex]);
             gd.addChoice("Mask:", titles, titles[lastMaskIndex]);
-            
+
             // --- Section: Computational Dimension ---
             gd.addMessage("=== COMPUTATIONAL DIMENSION ===");
             gd.addChoice("Base_Dimension:", new String[]{"2D basis", "3D basis"}, lastDimIndex == 0 ? "2D basis" : "3D basis");
-            
+
             // --- Section: Preprocessing ---
             gd.addMessage("=== PREPROCESSING ===");
             gd.addNumericField("Mask_Label:", lastLabel, 0);
             gd.addCheckbox("Remove_Outliers", bOutliers);
-            gd.addToSameRow(); 
+            gd.addToSameRow();
             gd.addNumericField("Sigma:", lastOutlierSigma, 2);
-            
+
             gd.addCheckbox("Range_Filtering", bRange);
             gd.addNumericField("min:", lastRangeMin, 2);
-            gd.addToSameRow(); 
+            gd.addToSameRow();
             gd.addNumericField("max:", lastRangeMax, 2);
-            
+
             gd.addCheckbox("Resampling", bResample);
             gd.addNumericField("vx:", lastVx, 2);
-            gd.addToSameRow(); 
+            gd.addToSameRow();
             gd.addNumericField("vy:", lastVy, 2);
-            gd.addToSameRow(); 
+            gd.addToSameRow();
             gd.addNumericField("vz:", lastVz, 2);
 
             // --- Section: Texture and Intensity Params ---
@@ -111,19 +136,19 @@ public class RadiomicsJ_Lite implements PlugIn {
             String[] cbLabels1 = {"Operational", "Diagnostics"};
             boolean[] cbStates1 = {bOper, bDiag};
             gd.addCheckboxGroup(1, 2, cbLabels1, cbStates1);
-            
+
             String[] cbLabels2 = {
-                "Morphological", "LocalIntensity", "IntensityStats", "IntensityHistogram", 
-                "VolumeHistogram", "GLCM", "GLRLM", "GLSZM", 
+                "Morphological", "LocalIntensity", "IntensityStats", "IntensityHistogram",
+                "VolumeHistogram", "GLCM", "GLRLM", "GLSZM",
                 "GLDZM", "NGTDM", "NGLDM", "Fractal"
             };
             boolean[] cbStates2 = {
-                bMorph, bLocInt, bIntStat, bIntHist, 
-                bIvh, bGlcm, bGlrlm, bGlszm, 
+                bMorph, bLocInt, bIntStat, bIntHist,
+                bIvh, bGlcm, bGlrlm, bGlszm,
                 bGldzm, bNgtdm, bNgldm, bFrac
             };
-            gd.addCheckboxGroup(4, 3, cbLabels2, cbStates2); 
-            
+            gd.addCheckboxGroup(4, 3, cbLabels2, cbStates2);
+
             // --- Section: Output ---
             gd.addMessage("=== OUTPUT ===");
             gd.addCheckbox("Export_to_CSV", bExportCsv);
@@ -131,77 +156,85 @@ public class RadiomicsJ_Lite implements PlugIn {
             gd.showDialog();
             if (gd.wasCanceled()) break;
 
-            // --- Update Memory Variables ---
-            lastImgIndex = gd.getNextChoiceIndex();
-            lastMaskIndex = gd.getNextChoiceIndex();
-            lastDimIndex = gd.getNextChoiceIndex();
+            // --- Update Memory Variables (order must exactly match addXxx() calls above) ---
+            lastImgIndex     = gd.getNextChoiceIndex();
+            lastMaskIndex    = gd.getNextChoiceIndex();
+            lastDimIndex     = gd.getNextChoiceIndex();
             lastTexDiscIndex = gd.getNextChoiceIndex();
             lastIvhDiscIndex = gd.getNextChoiceIndex();
-            lastLabel = (int) gd.getNextNumber();
+            lastLabel        = (int) gd.getNextNumber();
             lastOutlierSigma = gd.getNextNumber();
-            lastRangeMin = gd.getNextNumber();
-            lastRangeMax = gd.getNextNumber();
-            lastVx = gd.getNextNumber();
-            lastVy = gd.getNextNumber();
-            lastVz = gd.getNextNumber();
-            lastTexDiscVal = gd.getNextNumber();
-            lastDelta = gd.getNextNumber();
-            lastAlpha = gd.getNextNumber();
-            lastIvhDiscVal = gd.getNextNumber();
-            lastBoxSizes = gd.getNextString();
-            bOutliers = gd.getNextBoolean();
-            bRange = gd.getNextBoolean();
-            bResample = gd.getNextBoolean();
-            bOper = gd.getNextBoolean();
-            bDiag = gd.getNextBoolean();
-            bMorph = gd.getNextBoolean();
-            bLocInt = gd.getNextBoolean();
-            bIntStat = gd.getNextBoolean();
-            bIntHist = gd.getNextBoolean();
-            bIvh = gd.getNextBoolean();
-            bGlcm = gd.getNextBoolean();
-            bGlrlm = gd.getNextBoolean();
-            bGlszm = gd.getNextBoolean();
-            bGldzm = gd.getNextBoolean();
-            bNgtdm = gd.getNextBoolean();
-            bNgldm = gd.getNextBoolean();
-            bFrac = gd.getNextBoolean();
-            bExportCsv = gd.getNextBoolean();
+            lastRangeMin     = gd.getNextNumber();
+            lastRangeMax     = gd.getNextNumber();
+            lastVx           = gd.getNextNumber();
+            lastVy           = gd.getNextNumber();
+            lastVz           = gd.getNextNumber();
+            lastTexDiscVal   = gd.getNextNumber();
+            lastDelta        = gd.getNextNumber();
+            lastAlpha        = gd.getNextNumber();
+            lastIvhDiscVal   = gd.getNextNumber();
+            lastBoxSizes     = gd.getNextString();
+            bOutliers        = gd.getNextBoolean();
+            bRange           = gd.getNextBoolean();
+            bResample        = gd.getNextBoolean();
+            bOper            = gd.getNextBoolean();
+            bDiag            = gd.getNextBoolean();
+            bMorph           = gd.getNextBoolean();
+            bLocInt          = gd.getNextBoolean();
+            bIntStat         = gd.getNextBoolean();
+            bIntHist         = gd.getNextBoolean();
+            bIvh             = gd.getNextBoolean();
+            bGlcm            = gd.getNextBoolean();
+            bGlrlm           = gd.getNextBoolean();
+            bGlszm           = gd.getNextBoolean();
+            bGldzm           = gd.getNextBoolean();
+            bNgtdm           = gd.getNextBoolean();
+            bNgldm           = gd.getNextBoolean();
+            bFrac            = gd.getNextBoolean();
+            bExportCsv       = gd.getNextBoolean();
 
             // --- Execution Logic ---
             ImagePlus image = WindowManager.getImage(wList[lastImgIndex]);
-            ImagePlus mask = WindowManager.getImage(wList[lastMaskIndex]);
+            ImagePlus mask  = WindowManager.getImage(wList[lastMaskIndex]);
 
-            IJ.log("\\Clear"); 
+            IJ.log("\\Clear");
             IJ.log("==================================================");
-            IJ.log(" RadiomicsJ-Lite (Native Pipeline)");
+            IJ.log(" RadiomicsJ-Lite ");
             IJ.log("==================================================");
+
+            // clause can always restore it, even when an exception is thrown.
+            PrintStream originalOut = System.out;
 
             try {
                 SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
                 long startTime = System.currentTimeMillis();
-                IJ.log("▶ Extraction started at: " + sdf.format(new Date(startTime)));
+                IJ.log(">> Extraction started at: " + sdf.format(new Date(startTime)));
 
                 ResultsTable rt = new ResultsTable();
-                
+
                 // Engine Setup
-                RadiomicsJ.debug = false; 
+                RadiomicsJ.debug   = false;
                 RadiomicsJ.force2D = (lastDimIndex == 0);
-                
-                // Discretization
+
+                // Texture discretisation parameters (shared by all matrix-based families)
                 boolean useBinCountGlob = (lastTexDiscIndex == 0);
-                Integer binCountGlob = (int) lastTexDiscVal;
-                Double binWidthGlob = useBinCountGlob ? null : lastTexDiscVal;
+                Integer binCountGlob    = (int) lastTexDiscVal;
+                Double  binWidthGlob    = useBinCountGlob ? null : lastTexDiscVal;
 
-                boolean useBinCountIvh = (lastIvhDiscIndex == 0);
-                Integer binCountIvh = (int) lastIvhDiscVal;
-                Double binWidthIvh = useBinCountIvh ? null : lastIvhDiscVal;
-                int ivhMode = (lastIvhDiscIndex == 2) ? 1 : 2; 
-                
-                int[] boxArray = Arrays.stream(lastBoxSizes.split(",")).map(String::trim).mapToInt(Integer::parseInt).toArray();
+                int ivhMode = ivhDropdownToMode(lastIvhDiscIndex);
+                if (ivhMode == 2) {
+                    RadiomicsJ.IVH_binCount = (int) lastIvhDiscVal;
+                } else if (ivhMode == 1) {
+                    RadiomicsJ.IVH_binWidth = lastIvhDiscVal;
+                }
+                // ivhMode == 0: Use As-Is -- no static field needed, engine reads raw pixels.
 
-                // Console Interceptor to ensure UI responsiveness
-                PrintStream originalOut = System.out;
+                int[] boxArray = Arrays.stream(lastBoxSizes.split(","))
+                                       .map(String::trim)
+                                       .mapToInt(Integer::parseInt)
+                                       .toArray();
+
+                // Console interceptor -- routes engine stdout to the Fiji Log
                 PrintStream interceptor = new PrintStream(new OutputStream() {
                     StringBuilder sb = new StringBuilder();
                     @Override
@@ -209,11 +242,11 @@ public class RadiomicsJ_Lite implements PlugIn {
                         if (b == '\r') return;
                         if (b == '\n') {
                             String line = sb.toString();
-                            IJ.log(line); 
-                            String lowerLine = line.toLowerCase();
-                            if (lowerLine.contains("features") || line.contains("====")) {
-                                String cleanLine = line.replace("=", "").trim();
-                                if (!cleanLine.isEmpty()) IJ.showStatus("RadiomicsJ: " + cleanLine);
+                            IJ.log(line);
+                            String lower = line.toLowerCase();
+                            if (lower.contains("features") || line.contains("====")) {
+                                String clean = line.replace("=", "").trim();
+                                if (!clean.isEmpty()) IJ.showStatus("RadiomicsJ: " + clean);
                             }
                             sb.setLength(0);
                         } else {
@@ -221,10 +254,11 @@ public class RadiomicsJ_Lite implements PlugIn {
                         }
                     }
                 });
-                System.setOut(interceptor); 
+                System.setOut(interceptor);
 
-                // Profiling Variables
-                long tPre = 0, tMorph = 0, tLocInt = 0, tIntStat = 0, tIntHist = 0;
+                // Profiling variables
+                long tPre = 0, tOper = 0, tDiag = 0;
+                long tMorph = 0, tLocInt = 0, tIntStat = 0, tIntHist = 0;
                 long tIvh = 0, tGlcm = 0, tGlrlm = 0, tGlszm = 0, tGldzm = 0, tNgtdm = 0, tNgldm = 0, tFrac = 0;
                 long mark;
 
@@ -232,20 +266,32 @@ public class RadiomicsJ_Lite implements PlugIn {
                     // --- PHASE 1: PREPROCESSING ---
                     mark = System.currentTimeMillis();
                     IJ.log(">> Executing image preprocessing...");
+
+                    // Keep references to the original images for DiagnosticsInfo
+                    ImagePlus originalImp  = image;
+                    ImagePlus originalMask = mask;
+
                     ImagePlus imp = image.duplicate();
-                    ImagePlus msk = io.github.tatsunidas.radiomics.main.Utils.initMaskAsFloatAndConvertLabelOne(mask, lastLabel);
-                    int calcLabel = 1; 
+                    ImagePlus msk = io.github.tatsunidas.radiomics.main.Utils
+                            .initMaskAsFloatAndConvertLabelOne(mask, lastLabel);
+                    int calcLabel = 1; // initMaskAsFloatAndConvertLabelOne normalises the label to 1
 
                     if (bResample) {
                         IJ.log("   - Applying resampling...");
                         if (RadiomicsJ.force2D) {
                             imp = io.github.tatsunidas.radiomics.main.Utils.resample2D(imp, false, lastVx, lastVy, RadiomicsJ.interpolation2D);
-                            msk = io.github.tatsunidas.radiomics.main.Utils.resample2D(msk, true, lastVx, lastVy, RadiomicsJ.interpolation2D);
+                            msk = io.github.tatsunidas.radiomics.main.Utils.resample2D(msk, true,  lastVx, lastVy, RadiomicsJ.interpolation2D);
                         } else {
                             imp = io.github.tatsunidas.radiomics.main.Utils.resample3D(imp, false, lastVx, lastVy, lastVz);
-                            msk = io.github.tatsunidas.radiomics.main.Utils.resample3D(msk, true, lastVx, lastVy, lastVz);
+                            msk = io.github.tatsunidas.radiomics.main.Utils.resample3D(msk, true,  lastVx, lastVy, lastVz);
                         }
                     }
+
+                    // Snapshot after resampling but before resegmentation filters,
+                    // as DiagnosticsInfo requires both states separately.
+                    ImagePlus resampledImp  = imp;
+                    ImagePlus resampledMask = msk;
+
                     if (bRange) {
                         IJ.log("   - Applying range filtering...");
                         msk = ImagePreprocessing.rangeFiltering(imp, msk, calcLabel, lastRangeMax, lastRangeMin);
@@ -255,6 +301,9 @@ public class RadiomicsJ_Lite implements PlugIn {
                         RadiomicsJ.zScore = lastOutlierSigma;
                         msk = ImagePreprocessing.outlierFiltering(imp, msk, calcLabel);
                     }
+                    // msk is now the fully resegmented mask (post range-filter + outlier removal)
+                    ImagePlus resegmentedMask = msk;
+
                     tPre = System.currentTimeMillis() - mark;
 
                     rt.incrementCounter();
@@ -262,12 +311,41 @@ public class RadiomicsJ_Lite implements PlugIn {
 
                     // --- PHASE 2: FEATURE EXTRACTION ---
                     IJ.log(">> Starting feature extraction...");
-                    
+
+                    if (bOper) {
+                        mark = System.currentTimeMillis();
+                        IJ.log("   > Calculating Operational Info...");
+                        io.github.tatsunidas.radiomics.features.OperationalInfoFeatures oif =
+                            new io.github.tatsunidas.radiomics.features.OperationalInfoFeatures(imp);
+                        java.util.HashMap<String, String> info = oif.getInfo();
+                        for (String key : info.keySet()) {
+                            String val = info.get(key);
+                            rt.addValue("OperationalInfo_" + key, val != null ? val : "NaN");
+                        }
+                        tOper = System.currentTimeMillis() - mark;
+                    }
+
+                    if (bDiag) {
+                        mark = System.currentTimeMillis();
+                        IJ.log("   > Calculating Diagnostics Info...");
+                        io.github.tatsunidas.radiomics.features.DiagnosticsInfo di =
+                            new io.github.tatsunidas.radiomics.features.DiagnosticsInfo(
+                                originalImp, originalMask,
+                                resampledImp, resampledMask,
+                                resegmentedMask, calcLabel);
+                        for (io.github.tatsunidas.radiomics.features.DiagnosticsInfoType dinfo :
+                                io.github.tatsunidas.radiomics.features.DiagnosticsInfoType.values()) {
+                            Double v = di.getDiagnosticsBy(dinfo.name());
+                            rt.addValue("Diagnostics_" + dinfo.name(), v != null ? v : Double.NaN);
+                        }
+                        tDiag = System.currentTimeMillis() - mark;
+                    }
+
                     if (bMorph) {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating Morphological features...");
                         MorphologicalFeatures mf = new MorphologicalFeatures(imp, msk, calcLabel);
-                        for(MorphologicalFeatureType t : MorphologicalFeatureType.values()) {
+                        for (MorphologicalFeatureType t : MorphologicalFeatureType.values()) {
                             // Bypass Moran's I and Geary's C in 3D due to O(N^2) complexity
                             if (!RadiomicsJ.force2D && (t.name().equals("MoransIIndex") || t.name().equals("GearysCMeasure"))) {
                                 IJ.log("     [!] Skipping " + t.name() + " in 3D (Computationally expensive)");
@@ -283,7 +361,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating Local Intensity...");
                         LocalIntensityFeatures lif = new LocalIntensityFeatures(imp, msk, calcLabel);
-                        for(LocalIntensityFeatureType t : LocalIntensityFeatureType.values()) {
+                        for (LocalIntensityFeatureType t : LocalIntensityFeatureType.values()) {
                             Double v = lif.calculate(t.id());
                             rt.addValue("LocalIntensity_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -294,7 +372,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating Intensity Stats...");
                         IntensityBasedStatisticalFeatures isf = new IntensityBasedStatisticalFeatures(imp, msk, calcLabel);
-                        for(IntensityBasedStatisticalFeatureType t : IntensityBasedStatisticalFeatureType.values()) {
+                        for (IntensityBasedStatisticalFeatureType t : IntensityBasedStatisticalFeatureType.values()) {
                             Double v = isf.calculate(t.id());
                             rt.addValue("IntensityStats_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -305,7 +383,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating Intensity Histogram...");
                         IntensityHistogramFeatures ihf = new IntensityHistogramFeatures(imp, msk, calcLabel, useBinCountGlob, binCountGlob, binWidthGlob);
-                        for(IntensityHistogramFeatureType t : IntensityHistogramFeatureType.values()) {
+                        for (IntensityHistogramFeatureType t : IntensityHistogramFeatureType.values()) {
                             Double v = ihf.calculate(t.id());
                             rt.addValue("IntensityHistogram_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -315,10 +393,9 @@ public class RadiomicsJ_Lite implements PlugIn {
                     if (bIvh) {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating Volume Histogram (IVH)...");
-                        RadiomicsJ.IVH_binCount = binCountIvh;
-                        RadiomicsJ.IVH_binWidth = binWidthIvh;
+                        // Static fields already set correctly above (after FIX #3)
                         IntensityVolumeHistogramFeatures ivhf = new IntensityVolumeHistogramFeatures(imp, msk, calcLabel, ivhMode);
-                        for(IntensityVolumeHistogramFeatureType t : IntensityVolumeHistogramFeatureType.values()) {
+                        for (IntensityVolumeHistogramFeatureType t : IntensityVolumeHistogramFeatureType.values()) {
                             Double v = ivhf.calculate(t.id());
                             rt.addValue("VolumeHistogram_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -328,8 +405,8 @@ public class RadiomicsJ_Lite implements PlugIn {
                     if (bGlcm) {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating GLCM Texture...");
-                        GLCMFeatures glcm = new GLCMFeatures(imp, msk, calcLabel, (int)lastDelta, useBinCountGlob, binCountGlob, binWidthGlob, null);
-                        for(GLCMFeatureType t : GLCMFeatureType.values()) {
+                        GLCMFeatures glcm = new GLCMFeatures(imp, msk, calcLabel, (int) lastDelta, useBinCountGlob, binCountGlob, binWidthGlob, null);
+                        for (GLCMFeatureType t : GLCMFeatureType.values()) {
                             Double v = glcm.calculate(t.id());
                             rt.addValue("GLCM_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -340,7 +417,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating GLRLM Texture...");
                         GLRLMFeatures glrlm = new GLRLMFeatures(imp, msk, calcLabel, useBinCountGlob, binCountGlob, binWidthGlob, null);
-                        for(GLRLMFeatureType t : GLRLMFeatureType.values()) {
+                        for (GLRLMFeatureType t : GLRLMFeatureType.values()) {
                             Double v = glrlm.calculate(t.id());
                             rt.addValue("GLRLM_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -351,7 +428,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating GLSZM Texture...");
                         GLSZMFeatures glszm = new GLSZMFeatures(imp, msk, calcLabel, useBinCountGlob, binCountGlob, binWidthGlob);
-                        for(GLSZMFeatureType t : GLSZMFeatureType.values()) {
+                        for (GLSZMFeatureType t : GLSZMFeatureType.values()) {
                             Double v = glszm.calculate(t.id());
                             rt.addValue("GLSZM_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -362,7 +439,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating GLDZM Texture...");
                         GLDZMFeatures gldzm = new GLDZMFeatures(imp, msk, calcLabel, useBinCountGlob, binCountGlob, binWidthGlob);
-                        for(GLDZMFeatureType t : GLDZMFeatureType.values()) {
+                        for (GLDZMFeatureType t : GLDZMFeatureType.values()) {
                             Double v = gldzm.calculate(t.id());
                             rt.addValue("GLDZM_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -372,8 +449,8 @@ public class RadiomicsJ_Lite implements PlugIn {
                     if (bNgtdm) {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating NGTDM Texture...");
-                        NGTDMFeatures ngtdm = new NGTDMFeatures(imp, msk, calcLabel, (int)lastDelta, useBinCountGlob, binCountGlob, binWidthGlob);
-                        for(NGTDMFeatureType t : NGTDMFeatureType.values()) {
+                        NGTDMFeatures ngtdm = new NGTDMFeatures(imp, msk, calcLabel, (int) lastDelta, useBinCountGlob, binCountGlob, binWidthGlob);
+                        for (NGTDMFeatureType t : NGTDMFeatureType.values()) {
                             Double v = ngtdm.calculate(t.id());
                             rt.addValue("NGTDM_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -383,8 +460,8 @@ public class RadiomicsJ_Lite implements PlugIn {
                     if (bNgldm) {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating NGLDM Texture...");
-                        NGLDMFeatures ngldm = new NGLDMFeatures(imp, msk, calcLabel, (int)lastAlpha, (int)lastDelta, useBinCountGlob, binCountGlob, binWidthGlob);
-                        for(NGLDMFeatureType t : NGLDMFeatureType.values()) {
+                        NGLDMFeatures ngldm = new NGLDMFeatures(imp, msk, calcLabel, (int) lastAlpha, (int) lastDelta, useBinCountGlob, binCountGlob, binWidthGlob);
+                        for (NGLDMFeatureType t : NGLDMFeatureType.values()) {
                             Double v = ngldm.calculate(t.id());
                             rt.addValue("NGLDM_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -395,7 +472,7 @@ public class RadiomicsJ_Lite implements PlugIn {
                         mark = System.currentTimeMillis();
                         IJ.log("   > Calculating Fractals...");
                         FractalFeatures ff = new FractalFeatures(imp, msk, calcLabel, boxArray);
-                        for(FractalFeatureType t : FractalFeatureType.values()) {
+                        for (FractalFeatureType t : FractalFeatureType.values()) {
                             Double v = ff.calculate(t.id());
                             rt.addValue("Fractal_" + t.name(), v != null ? v : Double.NaN);
                         }
@@ -410,6 +487,8 @@ public class RadiomicsJ_Lite implements PlugIn {
                     IJ.log(" PERFORMANCE REPORT (Profiling)");
                     IJ.log("==================================================");
                     IJ.log(String.format(" - Preprocessing:    %.2f s", tPre / 1000.0));
+                    if (bOper)   IJ.log(String.format(" - Operational:      %.2f s", tOper / 1000.0));
+                    if (bDiag)   IJ.log(String.format(" - Diagnostics:      %.2f s", tDiag / 1000.0));
                     if (bMorph)  IJ.log(String.format(" - Morphological:    %.2f s", tMorph / 1000.0));
                     if (bLocInt) IJ.log(String.format(" - Local Intensity:  %.2f s", tLocInt / 1000.0));
                     if (bIntStat)IJ.log(String.format(" - Intensity Stats:  %.2f s", tIntStat / 1000.0));
@@ -424,8 +503,8 @@ public class RadiomicsJ_Lite implements PlugIn {
                     if (bFrac)   IJ.log(String.format(" - Fractals:         %.2f s", tFrac / 1000.0));
                     IJ.log("==================================================");
 
-                    IJ.log("\n⏹ End time: " + sdf.format(new Date(endTime)));
-                    IJ.log("⏱️ Total processing time: " + (durationSec / 60) + " min " + (durationSec % 60) + " sec\n");
+                    IJ.log("\n End time: " + sdf.format(new Date(endTime)));
+                    IJ.log(" Total processing time: " + (durationSec / 60) + " min " + (durationSec % 60) + " sec\n");
 
                     if (rt.getCounter() == 0) throw new Exception("Empty results table.");
 
@@ -433,20 +512,20 @@ public class RadiomicsJ_Lite implements PlugIn {
 
                     if (bExportCsv) {
                         SaveDialog sd = new SaveDialog("Save Results", "radiomics_features", ".csv");
-                        if (sd.getDirectory() != null && sd.getFileName() != null) { 
+                        if (sd.getDirectory() != null && sd.getFileName() != null) {
                             File csvFile = new File(sd.getDirectory(), sd.getFileName());
-                            rt.save(csvFile.getAbsolutePath()); 
+                            rt.save(csvFile.getAbsolutePath());
                             IJ.log(">> Exported to: " + csvFile.getAbsolutePath());
                         }
                     }
-                    
+
                 } finally {
                     System.setOut(originalOut);
                 }
-                
-                break; 
 
-            } catch (Throwable e) { 
+                break;
+
+            } catch (Throwable e) {
                 IJ.log("\n[ERROR] Critical failure during extraction:");
                 IJ.log(e.getMessage());
                 for (StackTraceElement element : e.getStackTrace()) IJ.log("  " + element.toString());
