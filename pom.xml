@@ -6,13 +6,26 @@
 
     <groupId>io.github.gamezconz</groupId>
     <artifactId>radiomicsj-lite</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <!--
+      The ImageJ (net.imagej:ij) and RadiomicsJ artifacts, and most Fiji
+      dependencies, live in the SciJava public repository. Declaring it here
+      makes the build self-contained even if a user's settings.xml restricts
+      the default repositories.
+    -->
+    <repositories>
+        <repository>
+            <id>scijava.public</id>
+            <url>https://maven.scijava.org/content/repositories/public/</url>
+        </repository>
+    </repositories>
 
     <dependencies>
         <dependency>
@@ -25,8 +38,32 @@
             <groupId>io.github.tatsunidas</groupId>
             <artifactId>radiomicsj</artifactId>
             <version>2.1.15</version>
+            <!--
+              RadiomicsJ's own POM requests quickhull3d with a malformed version
+              string ("quickhull3d-1.0.0"), which only exists on SciJava and is
+              the cause of the "Missing artifact ... quickhull3d-1.0.0" error.
+              We exclude that bad coordinate and pin the canonical one below.
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>com.github.quickhull3d</groupId>
+                    <artifactId>quickhull3d</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!--
+          Canonical quickhull3d, version "1.0.0", as published on Maven Central
+          (immutable, so this stays reproducible long-term). Provides the convex
+          hull used by the 3D morphological features.
+        -->
+        <dependency>
+            <groupId>com.github.quickhull3d</groupId>
+            <artifactId>quickhull3d</artifactId>
+            <version>1.0.0</version>
         </dependency>
     </dependencies>
+
     <build>
         <finalName>RadiomicsJ_Lite</finalName>
         <plugins>
