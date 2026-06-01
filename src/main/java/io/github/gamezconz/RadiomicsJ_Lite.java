@@ -144,6 +144,38 @@ public class RadiomicsJ_Lite implements PlugIn {
     }
 
     /**
+     * Factor to convert a length expressed in the given ImageJ unit to millimetres.
+     * RadiomicsJ ignores the unit string and treats the numeric voxel size as mm, so
+     * data calibrated in microns/cm/m must be rescaled or the 1 mm-iso mesh resampling
+     * explodes (e.g. 2000 micron read as 2000 mm). Unknown/"pixel"/"mm" -> 1 (left as-is).
+     */
+    private static double spatialUnitToMmFactor(String unit) {
+        if (unit == null) return 1.0;
+        String u = unit.trim().toLowerCase();
+        switch (u) {
+            case "nm": case "nanometer": case "nanometre":                                   return 1e-6;
+            case "\u00b5m": case "um": case "micron": case "microns":
+            case "micrometer": case "micrometre": case "micrometers":                         return 1e-3;
+            case "mm": case "millimeter": case "millimetre":                                  return 1.0;
+            case "cm": case "centimeter": case "centimetre":                                  return 10.0;
+            case "dm":                                                                        return 100.0;
+            case "m": case "meter": case "metre":                                             return 1000.0;
+            default:                                                                          return 1.0;
+        }
+    }
+
+    /** Rescale an ImagePlus's spatial calibration to mm in place (no-op when factor == 1). */
+    private static void applyMmCalibration(ImagePlus imp, double factor) {
+        if (factor == 1.0) return;
+        Calibration c = imp.getCalibration();
+        c.pixelWidth  *= factor;
+        c.pixelHeight *= factor;
+        c.pixelDepth  *= factor;
+        c.setUnit("mm");
+        imp.setCalibration(c);
+    }
+
+    /**
      * Small dialog shown BEFORE the main window so the configuration UI renders
      * directly in the chosen language. Returns false if the user cancels.
      */
@@ -348,18 +380,34 @@ public class RadiomicsJ_Lite implements PlugIn {
                         "[注意] '2D basis' を選択: リサンプリングのみ2Dです。テクスチャと形態の行列は引き続き3Dボリューム全体で計算されます（スライスごとのIBSI-2Dパイプラインは未実装）。SPECTの体積計測には '3D basis' を使用してください。"));
                 }
 
-                // --- Calibration sanity check (critical for all 3D measurements) ---
+                // --- Calibration: normalise spatial units to mm (RadiomicsJ assumes mm) ---
                 Calibration ic = image.getCalibration();
                 Calibration mc = mask.getCalibration();
-                IJ.log("   " + t("Image voxel size (mm): ", "Tamaño de vóxel imagen (mm): ",
-                        "Taille de voxel image (mm) : ", "Dimensione voxel immagine (mm): ",
-                        "Voxelgröße Bild (mm): ", "图像体素大小 (mm)：", "画像のボクセルサイズ (mm): ")
-                        + fmt(ic.pixelWidth) + " x " + fmt(ic.pixelHeight) + " x " + fmt(ic.pixelDepth) + "  [" + ic.getUnit() + "]");
-                IJ.log("   " + t("Mask voxel size (mm): ", "Tamaño de vóxel máscara (mm): ",
-                        "Taille de voxel masque (mm) : ", "Dimensione voxel maschera (mm): ",
-                        "Voxelgröße Maske (mm): ", "掩膜体素大小 (mm)：", "マスクのボクセルサイズ (mm): ")
-                        + fmt(mc.pixelWidth) + " x " + fmt(mc.pixelHeight) + " x " + fmt(mc.pixelDepth) + "  [" + mc.getUnit() + "]");
-                if (ic.pixelWidth == 1.0 && ic.pixelHeight == 1.0 && ic.pixelDepth == 1.0) {
+                final double imgMmFactor = spatialUnitToMmFactor(ic.getUnit());
+                final double mskMmFactor = spatialUnitToMmFactor(mc.getUnit());
+                // voxel sizes after conversion to mm (used for downstream calculation and warnings)
+                final double iw = ic.pixelWidth * imgMmFactor, ih = ic.pixelHeight * imgMmFactor, id = ic.pixelDepth * imgMmFactor;
+                final double mw = mc.pixelWidth * mskMmFactor, mh = mc.pixelHeight * mskMmFactor, md = mc.pixelDepth * mskMmFactor;
+
+                IJ.log("   " + t("Image voxel size: ", "Tamaño de vóxel imagen: ", "Taille de voxel image : ",
+                        "Dimensione voxel immagine: ", "Voxelgröße Bild: ", "图像体素大小：", "画像のボクセルサイズ: ")
+                        + fmt(ic.pixelWidth) + " x " + fmt(ic.pixelHeight) + " x " + fmt(ic.pixelDepth) + " [" + ic.getUnit() + "]"
+                        + (imgMmFactor != 1.0 ? "  ->  " + fmt(iw) + " x " + fmt(ih) + " x " + fmt(id) + " [mm]" : ""));
+                IJ.log("   " + t("Mask voxel size: ", "Tamaño de vóxel máscara: ", "Taille de voxel masque : ",
+                        "Dimensione voxel maschera: ", "Voxelgröße Maske: ", "掩膜体素大小：", "マスクのボクセルサイズ: ")
+                        + fmt(mc.pixelWidth) + " x " + fmt(mc.pixelHeight) + " x " + fmt(mc.pixelDepth) + " [" + mc.getUnit() + "]"
+                        + (mskMmFactor != 1.0 ? "  ->  " + fmt(mw) + " x " + fmt(mh) + " x " + fmt(md) + " [mm]" : ""));
+                if (imgMmFactor != 1.0 || mskMmFactor != 1.0) {
+                    IJ.log("   " + t(
+                        "[INFO] Spatial units rescaled to mm for IBSI-consistent calculation (no manual Image > Properties needed).",
+                        "[INFO] Unidades espaciales reescaladas a mm para un cálculo consistente con IBSI (no hace falta Image > Properties manual).",
+                        "[INFO] Unités spatiales converties en mm pour un calcul conforme à l'IBSI (pas besoin de Image > Properties manuel).",
+                        "[INFO] Unità spaziali riscalate in mm per un calcolo conforme a IBSI (nessun Image > Properties manuale necessario).",
+                        "[INFO] Räumliche Einheiten auf mm umgerechnet für IBSI-konforme Berechnung (kein manuelles Image > Properties nötig).",
+                        "[信息] 已将空间单位换算为 mm 以与 IBSI 一致（无需手动 Image > Properties）。",
+                        "[情報] IBSIに準拠した計算のため空間単位をmmに変換しました（手動のImage > Propertiesは不要）。"));
+                }
+                if (iw == 1.0 && ih == 1.0 && id == 1.0) {
                     IJ.log("   " + t(
                         "[WARNING] Image spacing is 1x1x1 (uncalibrated?). 3D volumes will be in voxel units, not mm^3. Check Image > Properties.",
                         "[AVISO] El espaciado de la imagen es 1x1x1 (¿sin calibrar?). Los volúmenes 3D estarán en unidades de vóxel, no en mm^3. Revise Image > Properties.",
@@ -369,9 +417,9 @@ public class RadiomicsJ_Lite implements PlugIn {
                         "[警告] 图像间距为 1x1x1（未校准？）。3D 体积将以体素为单位，而非 mm^3。请检查 Image > Properties。",
                         "[警告] 画像の間隔が1x1x1です（未校正？）。3D体積はmm^3ではなくボクセル単位になります。Image > Properties を確認してください。"));
                 }
-                if (Math.abs(ic.pixelWidth - mc.pixelWidth) > 1e-6
-                        || Math.abs(ic.pixelHeight - mc.pixelHeight) > 1e-6
-                        || Math.abs(ic.pixelDepth - mc.pixelDepth) > 1e-6) {
+                if (Math.abs(iw - mw) > 1e-6
+                        || Math.abs(ih - mh) > 1e-6
+                        || Math.abs(id - md) > 1e-6) {
                     IJ.log("   " + t(
                         "[WARNING] Image and mask voxel sizes differ. Make sure both share the same calibration.",
                         "[AVISO] El tamaño de vóxel de imagen y máscara difiere. Asegúrese de que ambas compartan la misma calibración.",
@@ -442,6 +490,11 @@ public class RadiomicsJ_Lite implements PlugIn {
                     //  - mask  -> float, target label normalised to 1
                     ImagePlus impFloat = Utils.createImageCopyAsFloat(image, false);
                     ImagePlus mskL1    = Utils.initMaskAsFloatAndConvertLabelOne(mask, lastLabel);
+
+                    // Rescale spatial calibration to mm so RadiomicsJ (which treats the voxel
+                    // size as mm) resamples correctly instead of exploding on micron/cm/m data.
+                    applyMmCalibration(impFloat, imgMmFactor);
+                    applyMmCalibration(mskL1,    mskMmFactor);
 
                     // Snapshots for DiagnosticsInfo. Use the label-1 mask (calcLabel == 1),
                     // otherwise ROI voxel counts use the wrong label when Mask_Label != 1.
