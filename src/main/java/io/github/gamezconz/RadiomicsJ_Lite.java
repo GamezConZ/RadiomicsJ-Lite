@@ -361,6 +361,9 @@ public class RadiomicsJ_Lite implements PlugIn {
                         "Extraktion gestartet um: ", "提取开始于：", "抽出開始時刻: ") + sdf.format(new Date(startTime)));
 
                 ResultsTable rt = new ResultsTable();
+                // 6 decimals (default is 3): small-valued texture features such as inverse
+                // variance (0.0604) or coarseness (0.0296) need >3 dp to verify against IBSI.
+                rt.setPrecision(6);
 
                 // Reset all relevant static state, then apply this run's config on top.
                 resetEngineStateToIBSIDefaults();
