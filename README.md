@@ -10,7 +10,7 @@ A minimalist, macro-recordable Fiji/ImageJ plugin for radiomic feature extractio
 
 RadiomicsJ-Lite is a direct GUI wrapper around the [RadiomicsJ](https://github.com/tatsunidas/RadiomicsJ) engine. Its only goal is **full integration with the Fiji ecosystem for reproducible research**: from segmentation to CSV without leaving ImageJ.
 
-A more complete alternative exists ([RadiomicsJ GUI Plugin](https://github.com/tatsunidas/RadiomicsJ_Plugin)); this Lite version drops the complex UI in favour of a native `GenericDialog`, which is what enables the points below.
+A more complete alternative exists ([RadiomicsJ GUI Plugin](https://github.com/tatsunidas/RadiomicsJ-ImageJ-Plugin)); this Lite version drops the complex UI in favour of a native `GenericDialog`, which is what enables the points below.
 
 ### Key features
 
@@ -53,7 +53,7 @@ Un plugin minimalista para Fiji/ImageJ que extrae características radiómicas y
 
 RadiomicsJ-Lite es una interfaz directa para el motor [RadiomicsJ](https://github.com/tatsunidas/RadiomicsJ). Su única meta es **integración total con el ecosistema Fiji para investigación reproducible**: de la segmentación al CSV sin salir de ImageJ.
 
-Existe una alternativa más completa ([RadiomicsJ GUI Plugin](https://github.com/tatsunidas/RadiomicsJ_Plugin)); esta versión Lite cambia la UI compleja por un `GenericDialog` nativo, que es lo que habilita lo siguiente.
+Existe una alternativa más completa ([RadiomicsJ GUI Plugin](https://github.com/tatsunidas/RadiomicsJ-ImageJ-Plugin)); esta versión Lite cambia la UI compleja por un `GenericDialog` nativo, que es lo que habilita lo siguiente.
 
 ### Características principales
 
